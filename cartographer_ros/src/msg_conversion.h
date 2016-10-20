@@ -17,6 +17,7 @@
 #ifndef CARTOGRAPHER_ROS_GOOGLE_CARTOGRAPHER_SRC_MSG_CONVERSION_H_
 #define CARTOGRAPHER_ROS_GOOGLE_CARTOGRAPHER_SRC_MSG_CONVERSION_H_
 
+
 #include "cartographer/common/port.h"
 #include "cartographer/kalman_filter/pose_tracker.h"
 #include "cartographer/sensor/point_cloud.h"
@@ -35,7 +36,7 @@
 
 namespace cartographer_ros {
 
-// Returns a laser scan consisting of the first echo of each beam.
+// Returns a laser scan consisting of the first echo of each beam
 sensor_msgs::LaserScan ToLaserScan(
     int64 timestamp, const string& frame_id,
     const ::cartographer::sensor::proto::LaserScan& laser_scan);

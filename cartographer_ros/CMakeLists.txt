@@ -26,6 +26,7 @@ set(PACKAGE_DEPENDENCIES
   tf2
   tf2_eigen
   tf2_ros
+  octomap_msgs
 )
 
 set(CMAKE_CXX_FLAGS "-pthread -std=c++11 -Wreorder")
@@ -79,6 +80,9 @@ add_definitions(${BOOST_DEFINITIONS})
 include_directories(${Boost_INCLUDE_DIRS})
 link_directories(${Boost_LIBRARY_DIRS})
 
+find_package(octomap REQUIRED)
+include_directories(${OCTOMAP_INCLUDE_DIRS})
+
 add_executable(cartographer_node
   src/cartographer_node_main.cc
   src/map_writer.cc
@@ -105,6 +109,7 @@ target_link_libraries(cartographer_node
   ${catkin_LIBRARIES}
   gflags
   yaml-cpp
+  ${OCTOMAP_LIBRARIES}
 )
 add_dependencies(cartographer_node
   ${catkin_EXPORTED_TARGETS}

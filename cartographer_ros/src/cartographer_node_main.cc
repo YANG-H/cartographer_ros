@@ -23,6 +23,7 @@
 #include <ros/ros.h>
 
 #include "Eigen/Core"
+#include "Eigen/Dense"
 
 #include "cartographer/common/configuration_file_resolver.h"
 #include "cartographer/common/lua_parameter_dictionary.h"
@@ -62,14 +63,6 @@
 #include "tf2_eigen/tf2_eigen.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
-
-
-// #include "octomap/octomap.h" ///
-// #include "octomap_ros/conversions.h"
-// #include "octomap_msgs/Octomap.h" ///
-// #include "octomap_msgs/conversions.h" ///
-// #include "octomap_msgs/GetOctomapRequest.h"
-// #include "octomap_msgs/GetOctomapResponse.h"
 
 #include "map_writer.h"
 #include "msg_conversion.h"
@@ -114,9 +107,7 @@ constexpr char kOccupancyGridTopic[] = "map";
 constexpr char kScanMatchedPointCloudTopic[] = "scan_matched_points2";
 constexpr char kSubmapListTopic[] = "submap_list";
 constexpr char kSubmapQueryServiceName[] = "submap_query";
-// constexpr char kSubmap3DQueryServiceName[] = "submap3d_query"; ///
 constexpr char kFinishTrajectoryServiceName[] = "finish_trajectory";
-
 constexpr char kSubmapPointCloud2Topic[] = "submap_points2"; ///
 
 // Node that listens to all the sensor data that we are interested in and wires
@@ -138,15 +129,13 @@ class Node {
   bool HandleSubmapQuery(
       ::cartographer_ros_msgs::SubmapQuery::Request& request,
       ::cartographer_ros_msgs::SubmapQuery::Response& response);
-  // bool
-  // HandleSubmap3DQuery(std_srvs::Empty &request,
-  //                     std_srvs::Empty &response);
 
   bool HandleFinishTrajectory(
       ::cartographer_ros_msgs::FinishTrajectory::Request& request,
       ::cartographer_ros_msgs::FinishTrajectory::Response& response);
 
   void PublishSubmapList(const ::ros::WallTimerEvent& timer_event);
+
   void PublishPoseAndScanMatchedPointCloud(
       const ::ros::WallTimerEvent& timer_event);
   
@@ -302,8 +291,6 @@ void Node::Initialize() {
 
   ///
   if (options_.map_builder_options.use_trajectory_builder_3d()) {
-    // submap3d_query_server_ = node_handle_.advertiseService(
-    //     kSubmap3DQueryServiceName, &Node::HandleSubmap3DQuery, this);
     submap_point_cloud_publisher_ =
         node_handle_.advertise<::sensor_msgs::PointCloud2>(
             kSubmapPointCloud2Topic, kInfiniteSubscriberQueueSize);
@@ -334,7 +321,7 @@ void Node::Initialize() {
 
   ///
   wall_timers_.push_back(node_handle_.createWallTimer(
-      ::ros::WallDuration(0.3), &Node::PublishSubmapPointCloud, this));
+      ::ros::WallDuration(1), &Node::PublishSubmapPointCloud, this));
 }
 
 bool Node::HandleSubmapQuery(
@@ -388,12 +375,6 @@ bool Node::HandleSubmapQuery(
   return true;
 }
 
-// bool Node::HandleSubmap3DQuery(std_srvs::Empty &request,
-//                                std_srvs::Empty &response) {
-//   // TODO
-//   return true;
-// }
-
 bool Node::HandleFinishTrajectory(
     ::cartographer_ros_msgs::FinishTrajectory::Request& request,
     ::cartographer_ros_msgs::FinishTrajectory::Response& response) {
@@ -446,8 +427,6 @@ void Node::PublishSubmapList(const ::ros::WallTimerEvent& timer_event) {
 
 ///
 void Node::PublishSubmapPointCloud(const ::ros::WallTimerEvent &timer_event){
-
-  // LOG(INFO) << "@@@ PublishSubmapPointCloud called";
   carto::common::MutexLocker lock(&mutex_);
   const carto::mapping::Submaps* submaps =
       map_builder_.GetTrajectoryBuilder(kTrajectoryBuilderId)->submaps();
@@ -459,22 +438,70 @@ void Node::PublishSubmapPointCloud(const ::ros::WallTimerEvent &timer_event){
       dynamic_cast<const carto::mapping_3d::Submaps *>(submaps);
   CHECK(submaps3d != nullptr);
 
-  const carto::mapping_3d::HybridGrid &grid =
-      submaps3d->low_resolution_matching_grid();
-  
-  //auto c = grid.GetCenterOfCell(Eigen::Array3i(0, 0, 0));
-  const std::vector<Eigen::Array4i> &voxel_data =
-      submaps3d->voxel_indices_and_probabilities();
+  std::vector<Eigen::Vector4f> voxels;
 
-  carto::sensor::PointCloud pc(voxel_data.size());
-  /// TODO
-  for(int i = 0; i < voxel_data.size(); i++){
-    const Eigen::Array4i & v = voxel_data[i];
-    //submaps3d->get
+  for (int i = 0; i < submaps3d->size(); i++) {
+    const carto::mapping_3d::Submap *submap = submaps3d->Get(i);
+    auto &grid = submap->low_resolution_hybrid_grid;
+    for (auto it = carto::mapping_3d::HybridGrid::Iterator(grid); !it.Done();
+         it.Next()) {
+
+      carto::transform::Rigid3f transform =
+          (submap_transforms[i] * submaps3d->Get(i)->local_pose().inverse())
+              .cast<float>();
+
+      const Eigen::Vector3f cell_center_local =
+          grid.GetCenterOfCell(it.GetCellIndex());
+      const Eigen::Vector3f cell_center_global = transform * cell_center_local;
+
+      float prob = carto::mapping::ValueToProbability(it.GetValue());
+      if (prob > 0.7f) {
+        voxels.push_back(Eigen::Vector4f(cell_center_global.x(),
+                                         cell_center_global.y(),
+                                         cell_center_global.z(), prob));
+      }
+    }
   }
 
-  //::sensor_msgs::PointCloud2 pc2 = ToPointCloud2Message(::ros::Time::now());
-  //submap_point_cloud_publisher_.publish(pc2);
+  sensor_msgs::PointCloud2 msg;
+  msg.header.stamp = ::ros::Time::now();
+  msg.header.frame_id = options_.map_frame;
+  msg.height = 1;
+  msg.width = voxels.size();
+  msg.fields.resize(4);
+  msg.fields[0].name = "x";
+  msg.fields[0].offset = 0;
+  msg.fields[0].datatype = 7;
+  msg.fields[0].count = 1;
+  msg.fields[1].name = "y";
+  msg.fields[1].offset = 4;
+  msg.fields[1].datatype = 7;
+  msg.fields[1].count = 1;
+  msg.fields[2].name = "z";
+  msg.fields[2].offset = 8;
+  msg.fields[2].datatype = 7;
+  msg.fields[2].count = 1;
+  msg.fields[3].name = "intensity";
+  msg.fields[3].offset = 12;
+  msg.fields[3].datatype = 7;
+  msg.fields[3].count = 1;
+
+  msg.is_bigendian = false;
+  msg.point_step = 16;
+  msg.row_step = 16 * msg.width;
+  msg.is_dense = true;
+  msg.data.resize(16 * voxels.size());
+
+  ::ros::serialization::OStream stream(msg.data.data(), msg.data.size());
+  for (const auto &point : voxels) {
+    stream.next(point.x());
+    stream.next(point.y());
+    stream.next(point.z());
+    stream.next(point.w());
+  }
+
+  LOG(INFO) << "published point cloud size = " << voxels.size();
+  submap_point_cloud_publisher_.publish(msg);
 }
 
 void Node::PublishPoseAndScanMatchedPointCloud(

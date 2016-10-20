@@ -34,7 +34,10 @@ endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
-find_package(catkin REQUIRED COMPONENTS geometry_msgs message_generation)
+find_package(catkin REQUIRED COMPONENTS 
+  geometry_msgs 
+  message_generation
+)
 
 add_message_files(
   FILES
