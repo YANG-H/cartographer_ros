@@ -165,7 +165,6 @@ class Node {
   ::ros::Subscriber odometry_subscriber_;
   ::ros::Publisher submap_list_publisher_;
   ::ros::ServiceServer submap_query_server_;
-  ::ros::ServiceServer submap3d_query_server_; ////
   ::ros::Publisher scan_matched_point_cloud_publisher_;
   carto::common::Time last_scan_matched_point_cloud_time_ =
       carto::common::Time::min();
