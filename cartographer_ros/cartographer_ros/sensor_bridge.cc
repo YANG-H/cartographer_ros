@@ -14,18 +14,28 @@
  * limitations under the License.
  */
 
-#include "sensor_bridge.h"
+#include "cartographer_ros/sensor_bridge.h"
 
 #include "cartographer/kalman_filter/pose_tracker.h"
-
-#include "msg_conversion.h"
-#include "time_conversion.h"
+#include "cartographer_ros/msg_conversion.h"
+#include "cartographer_ros/time_conversion.h"
 
 namespace cartographer_ros {
 
 namespace carto = ::cartographer;
 
 using carto::transform::Rigid3d;
+
+namespace {
+
+const string& CheckNoLeadingSlash(const string& frame_id) {
+  if (frame_id.size() > 0) {
+    CHECK_NE(frame_id[0], '/');
+  }
+  return frame_id;
+}
+
+}  // namespace
 
 SensorBridgeOptions CreateSensorBridgeOptions(
     carto::common::LuaParameterDictionary* const lua_parameter_dictionary) {
@@ -48,12 +58,10 @@ SensorBridgeOptions CreateSensorBridgeOptions(
 
 SensorBridge::SensorBridge(
     const SensorBridgeOptions& options, const TfBridge* const tf_bridge,
-    const int trajectory_id,
-    carto::mapping::SensorCollator<SensorData>* const sensor_collator)
+    carto::mapping::TrajectoryBuilder* const trajectory_builder)
     : options_(options),
       tf_bridge_(tf_bridge),
-      trajectory_id_(trajectory_id),
-      sensor_collator_(sensor_collator) {}
+      trajectory_builder_(trajectory_builder) {}
 
 void SensorBridge::HandleOdometryMessage(
     const string& topic, const nav_msgs::Odometry::ConstPtr& msg) {
@@ -70,16 +78,12 @@ void SensorBridge::HandleOdometryMessage(
       translational, Eigen::Matrix3d::Zero(),
       Eigen::Matrix3d::Zero(), rotational;
   // clang-format on
-  const auto sensor_to_tracking =
-      tf_bridge_->LookupToTracking(time, msg->child_frame_id);
+  const auto sensor_to_tracking = tf_bridge_->LookupToTracking(
+      time, CheckNoLeadingSlash(msg->child_frame_id));
   if (sensor_to_tracking != nullptr) {
-    sensor_collator_->AddSensorData(
-        trajectory_id_, carto::common::ToUniversal(time), topic,
-        carto::common::make_unique<SensorData>(
-            msg->child_frame_id,
-            SensorData::Odometry{
-                ToRigid3d(msg->pose.pose) * sensor_to_tracking->inverse(),
-                covariance}));
+    trajectory_builder_->AddOdometerPose(
+        topic, time, ToRigid3d(msg->pose.pose) * sensor_to_tracking->inverse(),
+        covariance);
   }
 }
 
@@ -88,22 +92,17 @@ void SensorBridge::HandleImuMessage(const string& topic,
   CHECK_NE(msg->linear_acceleration_covariance[0], -1);
   CHECK_NE(msg->angular_velocity_covariance[0], -1);
   const carto::common::Time time = FromRos(msg->header.stamp);
-  const auto sensor_to_tracking =
-      tf_bridge_->LookupToTracking(time, msg->header.frame_id);
+  const auto sensor_to_tracking = tf_bridge_->LookupToTracking(
+      time, CheckNoLeadingSlash(msg->header.frame_id));
   if (sensor_to_tracking != nullptr) {
     CHECK(sensor_to_tracking->translation().norm() < 1e-5)
         << "The IMU frame must be colocated with the tracking frame. "
            "Transforming linear acceleration into the tracking frame will "
            "otherwise be imprecise.";
-    sensor_collator_->AddSensorData(
-        trajectory_id_, carto::common::ToUniversal(time), topic,
-        carto::common::make_unique<SensorData>(
-            msg->header.frame_id,
-            SensorData::Imu{
-                sensor_to_tracking->rotation() *
-                    ToEigen(msg->linear_acceleration),
-                sensor_to_tracking->rotation() * ToEigen(msg->angular_velocity),
-            }));
+    trajectory_builder_->AddImuData(
+        topic, time,
+        sensor_to_tracking->rotation() * ToEigen(msg->linear_acceleration),
+        sensor_to_tracking->rotation() * ToEigen(msg->angular_velocity));
   }
 }
 
@@ -124,35 +123,30 @@ void SensorBridge::HandlePointCloud2Message(
   pcl::PointCloud<pcl::PointXYZ> pcl_point_cloud;
   pcl::fromROSMsg(*msg, pcl_point_cloud);
   const carto::common::Time time = FromRos(msg->header.stamp);
-  const auto sensor_to_tracking =
-      tf_bridge_->LookupToTracking(time, msg->header.frame_id);
+  const auto sensor_to_tracking = tf_bridge_->LookupToTracking(
+      time, CheckNoLeadingSlash(msg->header.frame_id));
   if (sensor_to_tracking != nullptr) {
-    sensor_collator_->AddSensorData(
-        trajectory_id_, carto::common::ToUniversal(time), topic,
-        carto::common::make_unique<SensorData>(
-            msg->header.frame_id,
-            carto::sensor::TransformLaserFan3D(
-                carto::sensor::FromProto(ToCartographer(pcl_point_cloud)),
-                sensor_to_tracking->cast<float>())));
+    trajectory_builder_->AddLaserFan(
+        topic, time,
+        carto::sensor::TransformLaserFan(
+            carto::sensor::FromProto(ToCartographer(pcl_point_cloud)),
+            sensor_to_tracking->cast<float>()));
   }
 }
 
 void SensorBridge::HandleLaserScanProto(
-    const string& topic, const ::cartographer::common::Time time,
-    const string& frame_id,
-    const ::cartographer::sensor::proto::LaserScan& laser_scan) {
-  const auto laser_fan_2d = carto::sensor::ToLaserFan(
+    const string& topic, const carto::common::Time time, const string& frame_id,
+    const carto::sensor::proto::LaserScan& laser_scan) {
+  const auto laser_fan = carto::sensor::ToLaserFan(
       laser_scan, options_.horizontal_laser_min_range,
       options_.horizontal_laser_max_range,
       options_.horizontal_laser_missing_echo_ray_length);
-  const auto sensor_to_tracking = tf_bridge_->LookupToTracking(time, frame_id);
+  const auto sensor_to_tracking =
+      tf_bridge_->LookupToTracking(time, CheckNoLeadingSlash(frame_id));
   if (sensor_to_tracking != nullptr) {
-    sensor_collator_->AddSensorData(
-        trajectory_id_, carto::common::ToUniversal(time), topic,
-        carto::common::make_unique<SensorData>(
-            frame_id, carto::sensor::TransformLaserFan3D(
-                          carto::sensor::ToLaserFan3D(laser_fan_2d),
-                          sensor_to_tracking->cast<float>())));
+    trajectory_builder_->AddLaserFan(
+        topic, time, carto::sensor::TransformLaserFan(
+                         laser_fan, sensor_to_tracking->cast<float>()));
   }
 }
 

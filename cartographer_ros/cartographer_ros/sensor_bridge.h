@@ -17,20 +17,18 @@
 #ifndef CARTOGRAPHER_ROS_SENSOR_BRIDGE_H_
 #define CARTOGRAPHER_ROS_SENSOR_BRIDGE_H_
 
-#include "cartographer/mapping/sensor_collator.h"
+#include "cartographer/mapping/trajectory_builder.h"
 #include "cartographer/transform/rigid_transform.h"
 #include "cartographer/transform/transform.h"
+#include "cartographer_ros/tf_bridge.h"
 #include "geometry_msgs/Transform.h"
 #include "geometry_msgs/TransformStamped.h"
 #include "nav_msgs/OccupancyGrid.h"
 #include "nav_msgs/Odometry.h"
-#include "sensor_data.h"
 #include "sensor_msgs/Imu.h"
 #include "sensor_msgs/LaserScan.h"
 #include "sensor_msgs/MultiEchoLaserScan.h"
 #include "sensor_msgs/PointCloud2.h"
-
-#include "tf_bridge.h"
 
 namespace cartographer_ros {
 
@@ -50,8 +48,7 @@ class SensorBridge {
  public:
   explicit SensorBridge(
       const SensorBridgeOptions& options, const TfBridge* tf_bridge,
-      int trajectory_id,
-      ::cartographer::mapping::SensorCollator<SensorData>* sensor_collator);
+      ::cartographer::mapping::TrajectoryBuilder* trajectory_builder);
 
   SensorBridge(const SensorBridge&) = delete;
   SensorBridge& operator=(const SensorBridge&) = delete;
@@ -76,8 +73,7 @@ class SensorBridge {
 
   const SensorBridgeOptions options_;
   const TfBridge* const tf_bridge_;
-  const int trajectory_id_;
-  ::cartographer::mapping::SensorCollator<SensorData>* const sensor_collator_;
+  ::cartographer::mapping::TrajectoryBuilder* const trajectory_builder_;
 };
 
 }  // namespace cartographer_ros

@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-#include "occupancy_grid.h"
+#include "cartographer_ros/occupancy_grid.h"
 
-#include "time_conversion.h"
-
+#include "cartographer_ros/time_conversion.h"
 #include "glog/logging.h"
 
 namespace cartographer_ros {
@@ -42,9 +41,8 @@ void BuildOccupancyGrid(
   for (const auto& node : trajectory_nodes) {
     CHECK(node.constant_data->laser_fan_3d.returns.empty());  // No 3D yet.
     laser_fan_inserter.Insert(
-        carto::sensor::TransformLaserFan(
-            node.constant_data->laser_fan,
-            carto::transform::Project2D(node.pose).cast<float>()),
+        carto::sensor::TransformLaserFan(node.constant_data->laser_fan_2d,
+                                         node.pose.cast<float>()),
         &probability_grid);
   }
 
